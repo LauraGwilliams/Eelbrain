@@ -34,6 +34,7 @@ from ..mne_fixes import _interpolate_bads_eeg_epochs
 from .._data_obj import (align, UTS, DimensionMismatchError,
                          assert_is_legal_dataset_key)
 from ..fmtxt import List, Report
+from .._stats.testnd import _MultiEffectResult
 from .._resources import predefined_connectivity
 from .._utils import subp, ui, keydefaultdict
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
@@ -1249,6 +1250,44 @@ class MneExperiment(FileTree):
                   (self.get('subject'), self.get('experiment')))
             self.make_bad_channels(())
             return []
+
+    def _load_cluster(self, test, tstart, tstop, pmin, cluster_id, effect=0,
+                      parc=None, mask=None, sns_baseline=True, src_baseline=None):
+        if pmin is None or isinstance(pmin, basestring):
+            raise NotImplementedError
+        res = self.load_test(test, tstart, tstop, pmin, parc, mask, 1, 'src',
+                             sns_baseline, src_baseline)
+        if isinstance(res, _MultiEffectResult):
+            return res.cluster(cluster_id, effect)
+        else:
+            return res.cluster(cluster_id)
+
+    def _load_cluster_trial_data(self, subject, test, tstart, tstop, pmin,
+                                 cluster_id, effect=0, parc=None, mask=None,
+                                 sns_baseline=True, src_baseline=None,
+                                 epoch_inv=None, **kwargs):
+        with self._temporary_state:
+            subject, group = self._process_subject_arg(subject, kwargs)
+            cluster = self._load_cluster(test, tstart, tstop, pmin, cluster_id,
+                                         effect, parc, mask, sns_baseline,
+                                         src_baseline)
+            if epoch_inv:
+                self.set(inv=epoch_inv)
+
+            index = cluster != 0
+            dss = []
+            if group is not None:
+                for subject in self.iter(group=group):
+                    ds = self.load_epochs_stc(subject, sns_baseline, src_baseline,
+                                              morph=True)
+                    ds['cluster_value'] = ds.pop('srcm').mean(index)
+                    dss.append(ds)
+            else:
+                ds = self.load_epochs_stc(subject, sns_baseline, src_baseline,
+                                          morph=True)
+                ds['cluster_value'] = ds.pop('srcm').mean(index)
+                dss.append(ds)
+        return combine(dss)
 
     def load_cov(self, **kwargs):
         """Load the covariance matrix
